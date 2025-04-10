@@ -1,0 +1,23 @@
+body{
+  background-color: transparent;
+}
+#title{
+  margin: 0 auto;
+  text-align: center;
+}
+.settings{
+  inline: block;
+}
+#svg{
+  background-color: #000;
+  width: 100%;
+  height: auto;
+}
+.round-line{
+  stroke-width: 1;
+  stroke-linejoin: round;
+  fill: transparent;
+}
+.planet{
+  fill: currentcolor;
+}
