@@ -106,7 +106,6 @@ volume.addEventListener("input", e =>
 
 async function init(){
   isInitialized = true;
-  console.log("aaa");
   const
     baseFreq = system[2].product.
       connect(new WaveShaperNode(ctx, {curve: [...Array(100).keys()].
