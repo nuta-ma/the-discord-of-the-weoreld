@@ -146,6 +146,7 @@ async function init(){
       s.xs.gain.linearRampToValueAtTime(-b, ctx.currentTime + 0.005);
       s.yc.gain.linearRampToValueAtTime(b, ctx.currentTime + 0.005);
       s.ys.gain.linearRampToValueAtTime(a, ctx.currentTime + 0.005);
+      s.cos.frequency.value = s.sin.frequency.value = s.frequency = 2 / r / Math.sqrt(r);
     });
     requestId = window.requestAnimationFrame(revolve);
   });
