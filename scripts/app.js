@@ -14,14 +14,13 @@ const
   playIcon = document.createElementNS(NS, "polygon"),
   pauseIcon = document.createElementNS(NS, "path"),
   ctx = new AudioContext({latencyHint: "playback"}),
-  bus1 = new GainNode(ctx),
+  master = new GainNode(ctx),
   cosWave = new PeriodicWave(ctx, {real: [0,1]}),
   buf = new Float32Array(64);
 let
   isManual = false,
   isInitialized = false,
   requestId;
-
 
 for (let i = 0; i < 3; i++){
   let
@@ -92,24 +91,43 @@ star.addEventListener("click", () => {
     playIcon.setAttribute("visibility", "hidden");
     pauseIcon.setAttribute("visibility", "visible");
     ctx.resume();
+    requestId = window.requestAnimationFrame(revolve);
   }
   else if (ctx.state === "running"){
     playIcon.setAttribute("visibility", "visible");
     pauseIcon.setAttribute("visibility", "hidden");
     ctx.suspend();
+    window.cancelAnimationFrame(requestId);
   }
   if (!isInitialized) init();
 });
 
+function movePlanet(s, x, y, r){
+  s.planet.setAttribute("cx", x);
+  s.planet.setAttribute("cy", y);
+  s.orbit.setAttribute("r", r);
+};
+
+function revolve(){
+  system.forEach(s => {
+    s.ax.getFloatTimeDomainData(buf);
+    const x = buf.slice(-1)[0];
+    s.ay.getFloatTimeDomainData(buf);
+    const y = buf.slice(-1)[0];
+    movePlanet(s, x, y, Math.hypot(x,y));
+  });
+  requestId = window.requestAnimationFrame(revolve);				
+}
+
 volume.addEventListener("input", e =>
-  bus1.gain.linearRampToValueAtTime(e.target.value, ctx.currentTime + 0.005));
+  master.gain.linearRampToValueAtTime(e.target.value, ctx.currentTime + 0.005));
 
 async function init(){
   isInitialized = true;
   const
     baseFreq = system[2].product.
-      connect(new WaveShaperNode(ctx, {curve: [...Array(100).keys()].
-        map(i => 78 * 8 ** (i/99))})),
+      connect(new WaveShaperNode(ctx, {curve: [...Array(100)].
+        map((_, i) => 78 * 8 ** (i/99))})),
     baseOsc = new OscillatorNode(ctx, {frequency: 0}),
     baseOscGain = baseOsc.connect(new GainNode(ctx, {gain: 0.4})),
     reverb0 = new ConvolverNode(ctx, {buffer: await fetch("audio/ir0.wav").
@@ -123,8 +141,9 @@ async function init(){
     ratio = new GainNode(ctx, {gain: 0}),
     splitter = new ChannelSplitterNode(ctx, {numberOfOutputs: 2}),
     merger = new ChannelMergerNode(ctx, {numberOfInputs: 2}),
+    hpf = new BiquadFilterNode(ctx, {type: "highpass", frequency: 10}),
+    bus1 = new GainNode(ctx, {gain: 0}),
     bus2 = new GainNode(ctx, {gain: 0}),
-    bus3 = new GainNode(ctx, {gain: 0}),
     squareOf = function (node){
       const g = new GainNode(ctx, {gain: 0});
       node.connect(g);
@@ -132,6 +151,69 @@ async function init(){
       return g;
     },
     scale = [1, 9/8, 6/5, 4/3, 3/2, 8/5, 9/5];
+
+  baseFreq.
+    connect(baseOsc.frequency);
+  baseOscGain.
+    connect(reverb0);
+  baseOscGain.
+    connect(reverb1);
+  splitter.
+    connect(reverb0, 1, 0).
+    connect(merger, 0, 0);
+  splitter.
+    connect(reverb1, 0, 0).
+    connect(merger, 0, 1).
+    connect(new WaveShaperNode(ctx, {curve: [-1,1,-1]})).
+    connect(hpf).
+    connect(am).
+    connect(new DelayNode(ctx, {delayTime: 0.7})).
+    connect(new GainNode(ctx, {gain: 0.6})).
+    connect(splitter);
+  system[1].product.
+    connect(new WaveShaperNode(ctx, {curve: [0, 2]})).
+    connect(ratio.gain);
+  baseFreq.
+    connect(ratio).
+    connect(modulator.frequency);
+  modulator.
+    connect(am.gain);
+  squareOf(system[0].product.
+    connect(new WaveShaperNode(ctx, {curve: [0, 1]}))).
+    connect(bus1.gain);
+  squareOf(system[0].product.
+    connect(new WaveShaperNode(ctx, {curve: [1, 0]}))).
+    connect(bus2.gain);
+  bus1.
+    connect(master);
+  bus2.
+    connect(master);
+  master.
+    connect(ctx.destination);
+
+  baseOsc.start();
+  modulator.start();
+  system.forEach(s => {
+    s.cos.start();
+    s.sin.start();
+  });
+  for (let i = 0; i < 7; i++){
+    const dest =
+      (i === 2 || i === 5) ? bus1 :
+      (i === 3 || i === 6) ? bus2 :
+      master;
+    for (let j = 0, f = 22 * scale[i]; j < 7; j++, f *= 2){
+      const
+        o = new OscillatorNode(ctx, {frequency: 3 * f}),
+        g = hpf.
+          connect(new BiquadFilterNode(ctx, {type: "bandpass", Q: 60, frequency: f})).
+          connect(new GainNode(ctx, {gain: 0}));
+      o.connect(g.gain);
+      g.connect(new BiquadFilterNode(ctx, {type: "bandpass", Q: 60, frequency: 2 * f})).
+        connect(dest);
+      o.start();
+    }
+  }
 
   randomizeButton.addEventListener("click", () => {
     if (ctx.state === "suspended") return;
@@ -154,12 +236,6 @@ async function init(){
   function spacePoint(x, y){
     let pt = new DOMPoint(x,y);
     return pt.matrixTransform(space.getScreenCTM().inverse());
-  };
-
-  function movePlanet(s, x, y, r){
-    s.planet.setAttribute("cx", x);
-    s.planet.setAttribute("cy", y);
-    s.orbit.setAttribute("r", r ? r : Math.hypot(x, y));
   };
 
   function followPointer(x, y){
@@ -226,78 +302,4 @@ async function init(){
     isManual = false;
     revolve();
   });
-
-  function revolve(){
-    system.forEach(s => {
-      s.ax.getFloatTimeDomainData(buf);
-      const x = buf.slice(-1)[0];
-      s.ay.getFloatTimeDomainData(buf);
-      const y = buf.slice(-1)[0];
-      movePlanet(s, x, y);
-    });
-    requestId = window.requestAnimationFrame(revolve);				
-  }
-  revolve();
-
-  baseFreq.
-    connect(baseOsc.frequency);
-  baseOscGain.
-    connect(reverb0);
-  baseOscGain.
-    connect(reverb1);
-  splitter.
-    connect(reverb0, 1, 0).
-    connect(merger, 0, 0);
-  splitter.
-    connect(reverb1, 0, 0).
-    connect(merger, 0, 1).
-    connect(new WaveShaperNode(ctx, {curve: [-1,1,-1]})).
-    connect(new BiquadFilterNode(ctx, {type: "highpass", frequency: 10})).
-    connect(bus1).
-    connect(am).
-    connect(new DelayNode(ctx, {delayTime: 0.7})).
-    connect(new GainNode(ctx, {gain: 0.6})).
-    connect(splitter);
-  system[1].product.
-    connect(new WaveShaperNode(ctx, {curve: [0, 2]})).
-    connect(ratio.gain);
-  baseFreq.
-    connect(ratio).
-    connect(modulator.frequency);
-  modulator.
-    connect(am.gain);
-  squareOf(system[0].product.
-    connect(new WaveShaperNode(ctx, {curve: [0, 1]}))).
-    connect(bus2.gain);
-  squareOf(system[0].product.
-    connect(new WaveShaperNode(ctx, {curve: [1, 0]}))).
-    connect(bus3.gain);
-  bus2.
-    connect(ctx.destination);
-  bus3.
-    connect(ctx.destination);
-
-  baseOsc.start();
-  modulator.start();
-  system.forEach(s => {
-    s.cos.start();
-    s.sin.start();
-  });
-  for (let i = 0; i < 7; i++){
-    const dest =
-      (i === 2 || i === 5) ? bus2 :
-      (i === 3 || i === 6) ? bus3 :
-      ctx.destination;
-    for (let j = 0, f = 22 * scale[i]; j < 7; j++, f *= 2){
-      const
-        o = new OscillatorNode(ctx, {frequency: 3 * f}),
-        g = bus1.
-          connect(new BiquadFilterNode(ctx, {type: "bandpass", Q: 60, frequency: f})).
-          connect(new GainNode(ctx, {gain: 0}));
-      o.connect(g.gain);
-      g.connect(new BiquadFilterNode(ctx, {type: "bandpass", Q: 60, frequency: 2 * f})).
-        connect(dest);
-      o.start();
-    }
-  }
 }
