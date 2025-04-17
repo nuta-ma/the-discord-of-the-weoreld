@@ -18,8 +18,8 @@ const
   cosWave = new PeriodicWave(ctx, {real: [0,1]}),
   buf = new Float32Array(64);
 let
-  isManual = false,
   isInitialized = false,
+  isManual = false,
   requestId;
 
 for (let i = 0; i < 3; i++){
@@ -40,7 +40,6 @@ for (let i = 0; i < 3; i++){
     pr = new GainNode(ctx, {gain: 1/r}),
     s = {
       planet: p, orbit: o, 
-      frequency: f,
       cos: cos, sin: sin,
       xc: xc, xs: xs, yc: yc, ys: ys,
       ax: ax, ay: ay,
@@ -71,6 +70,8 @@ for (let i = 0; i < 3; i++){
 system.forEach(s => space.appendChild(s.orbit));
 system.forEach(s => space.appendChild(s.planet));
 
+star.setAttribute("fill-opacity", .9);
+star.setAttribute("stroke-opacity", .9);
 starFrame.setAttribute("fill", "aliceblue");
 starFrame.setAttribute("r", planetRadius);
 playIcon.setAttribute("points", "-2,4 4,0 -2,-4");
@@ -85,6 +86,8 @@ space.appendChild(star);
 star.appendChild(starFrame);
 star.appendChild(playIcon);
 star.appendChild(pauseIcon);
+
+ctx.suspend();
 
 star.addEventListener("click", () => {
   if (ctx.state === "suspended"){
@@ -102,19 +105,15 @@ star.addEventListener("click", () => {
   if (!isInitialized) init();
 });
 
-function movePlanet(s, x, y, r){
-  s.planet.setAttribute("cx", x);
-  s.planet.setAttribute("cy", y);
-  s.orbit.setAttribute("r", r);
-};
-
 function revolve(){
   system.forEach(s => {
     s.ax.getFloatTimeDomainData(buf);
     const x = buf.slice(-1)[0];
     s.ay.getFloatTimeDomainData(buf);
     const y = buf.slice(-1)[0];
-    movePlanet(s, x, y, Math.hypot(x,y));
+    s.planet.setAttribute("cx", x);
+    s.planet.setAttribute("cy", y);
+    s.orbit.setAttribute("r", Math.hypot(x,y));
   });
   requestId = window.requestAnimationFrame(revolve);				
 }
@@ -144,13 +143,14 @@ async function init(){
     hpf = new BiquadFilterNode(ctx, {type: "highpass", frequency: 10}),
     bus1 = new GainNode(ctx, {gain: 0}),
     bus2 = new GainNode(ctx, {gain: 0}),
-    squareOf = function (node){
-      const g = new GainNode(ctx, {gain: 0});
-      node.connect(g);
-      node.connect(g.gain);
-      return g;
-    },
     scale = [1, 9/8, 6/5, 4/3, 3/2, 8/5, 9/5];
+
+  function squareOf(node){
+    const g = new GainNode(ctx, {gain: 0});
+    node.connect(g);
+    node.connect(g.gain);
+    return g;
+  }
 
   baseFreq.
     connect(baseOsc.frequency);
@@ -228,7 +228,7 @@ async function init(){
       s.xs.gain.linearRampToValueAtTime(-b, ctx.currentTime + 0.005);
       s.yc.gain.linearRampToValueAtTime(b, ctx.currentTime + 0.005);
       s.ys.gain.linearRampToValueAtTime(a, ctx.currentTime + 0.005);
-      s.cos.frequency.value = s.sin.frequency.value = s.frequency = 2 / r / Math.sqrt(r);
+      s.cos.frequency.value = s.sin.frequency.value = 2 / r / Math.sqrt(r);
     });
     requestId = window.requestAnimationFrame(revolve);
   });
@@ -240,15 +240,20 @@ async function init(){
 
   function followPointer(x, y){
     const
-      pt = spacePoint(x, y),
+      pt = spacePoint(x, y);
+    let
       cx = pt.x - tmp.x,
       cy = pt.y - tmp.y,
       r = Math.hypot(cx, cy);
-    if (r <= 2 * planetRadius) return;
+    if (r == 0) return;
+    if (r <= planetRadius) {
+      cx *= planetRadius / r;
+      cy *= planetRadius / r;
+      r = planetRadius;
+    }
     const
       a = cx * tmp.cos + cy * tmp.sin,
       b = cy * tmp.cos - cx * tmp.sin;
-    movePlanet(tmp.s, cx, cy, r);
     tmp.s.product.gain.linearRampToValueAtTime(1 / r, ctx.currentTime + 0.05);
     tmp.s.xc.gain.linearRampToValueAtTime(a, ctx.currentTime + 0.005);
     tmp.s.xs.gain.linearRampToValueAtTime(-b, ctx.currentTime + 0.005);
@@ -259,7 +264,6 @@ async function init(){
   system.forEach(s =>
     s.planet.addEventListener("pointerdown", e => {
       if (ctx.state === "suspended") return;
-      window.cancelAnimationFrame(requestId);
       isManual = true;
       tmp.s = s;
       const
@@ -271,9 +275,7 @@ async function init(){
       tmp.y = pt.y - cy;
       tmp.cos = (cx * s.xc.gain.value + cy * s.yc.gain.value) / r / r;
       tmp.sin = (cy * s.xc.gain.value - cx * s.yc.gain.value) / r / r;
-      system.forEach(s => {
-        s.cos.frequency.value = s.sin.frequency.value = 0;
-      });
+      s.cos.frequency.value = s.sin.frequency.value = 0;
     })
   );
 
@@ -294,12 +296,8 @@ async function init(){
       r = tmp.s.orbit.r.baseVal.value,
       cx = tmp.s.planet.cx.baseVal.value,
       cy = tmp.s.planet.cy.baseVal.value;
-    tmp.s.frequency = 2 / r / Math.sqrt(r);
-    system.forEach(s => {
-      s.cos.frequency.value = s.sin.frequency.value = s.frequency;
-    });
+    tmp.s.cos.frequency.value = tmp.s.sin.frequency.value = 2 / r / Math.sqrt(r);
     tmp.s.product.gain.linearRampToValueAtTime(1 / r, ctx.currentTime + 0.005); 
     isManual = false;
-    revolve();
   });
 }
