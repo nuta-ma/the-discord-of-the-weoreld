@@ -189,6 +189,7 @@ async function init(){
   bus2.
     connect(master);
   master.
+    connect(new GainNode(ctx, {gain: 2})).
     connect(ctx.destination);
 
   baseOsc.start();
