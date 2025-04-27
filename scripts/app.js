@@ -1,7 +1,8 @@
 "use strict";
 
 const
-  volume = document.getElementById("volume"),
+  volumeRange = document.getElementById("volume-range"),
+  distGainRange = document.getElementById("dist-gain-range"),
   randomizeButton = document.getElementById("randomize-button"),
   svg = document.getElementById("svg"),
   space = document.getElementById("space"),
@@ -14,13 +15,20 @@ const
   playIcon = document.createElementNS(NS, "polygon"),
   pauseIcon = document.createElementNS(NS, "path"),
   ctx = new AudioContext({latencyHint: "playback"}),
-  master = new GainNode(ctx),
+  distGain = new GainNode(ctx),
+  master = distGain.
+    connect(new GainNode(ctx, {gain: 0.08})).
+    connect(new WaveShaperNode(ctx, {curve: [...Array(5001)].map((_, i) => 
+      2 / (1 + Math.exp(50 - i/50)) - 1)})).
+    connect(new GainNode(ctx)),
   cosWave = new PeriodicWave(ctx, {real: [0,1]}),
   buf = new Float32Array(64);
 let
   isInitialized = false,
   isManual = false,
-  requestId;
+  requestId,
+  dt = 0,
+  prev = performance.now();
 
 for (let i = 0; i < 3; i++){
   let
@@ -53,7 +61,7 @@ for (let i = 0; i < 3; i++){
   o.setAttribute("r", r);
   p.setAttribute("cx", r);
   p.setAttribute("r", planetRadius);
-  p.style.color = "rgb(" + i * 30 + 200 + "," + i * 50 + ", 0)";
+  p.style.color = ["wheat", "darkseagreen", "lightblue"][i];
 
   cos.connect(xc);
   cos.connect(yc);
@@ -94,7 +102,7 @@ star.addEventListener("click", () => {
     playIcon.setAttribute("visibility", "hidden");
     pauseIcon.setAttribute("visibility", "visible");
     ctx.resume();
-    requestId = window.requestAnimationFrame(revolve);
+    requestId = window.requestAnimationFrame(draw);
   }
   else if (ctx.state === "running"){
     playIcon.setAttribute("visibility", "visible");
@@ -105,7 +113,7 @@ star.addEventListener("click", () => {
   if (!isInitialized) init();
 });
 
-function revolve(){
+function draw(timestamp){
   system.forEach(s => {
     s.ax.getFloatTimeDomainData(buf);
     const x = buf.slice(-1)[0];
@@ -115,18 +123,25 @@ function revolve(){
     s.planet.setAttribute("cy", y);
     s.orbit.setAttribute("r", Math.hypot(x,y));
   });
-  requestId = window.requestAnimationFrame(revolve);				
+  dt = (timestamp - prev) / 1000;
+  prev = timestamp;
+  requestId = window.requestAnimationFrame(draw);				
 }
 
-volume.addEventListener("input", e =>
-  master.gain.linearRampToValueAtTime(e.target.value, ctx.currentTime + 0.005));
+volumeRange.addEventListener("input", e =>
+  master.gain.linearRampToValueAtTime(
+    e.target.value == 0 ? 0 : 100 ** (e.target.value - 1), ctx.currentTime + dt));
+
+distGainRange.addEventListener("input", e =>
+  distGain.gain.linearRampToValueAtTime(
+    Math.exp(e.target.value * 3), ctx.currentTime + dt));
 
 async function init(){
   isInitialized = true;
   const
     baseFreq = system[2].product.
-      connect(new WaveShaperNode(ctx, {curve: [...Array(100)].
-        map((_, i) => 78 * 8 ** (i/99))})),
+      connect(new WaveShaperNode(ctx, {curve: [...Array(1001)].
+        map((_, i) => 78 * 8 ** (i/1000))})),
     baseOsc = new OscillatorNode(ctx, {frequency: 0}),
     baseOscGain = baseOsc.connect(new GainNode(ctx, {gain: 0.4})),
     reverb0 = new ConvolverNode(ctx, {buffer: await fetch("audio/ir0.wav").
@@ -185,11 +200,10 @@ async function init(){
     connect(new WaveShaperNode(ctx, {curve: [1, 0]}))).
     connect(bus2.gain);
   bus1.
-    connect(master);
+    connect(distGain);
   bus2.
-    connect(master);
+    connect(distGain);
   master.
-    connect(new GainNode(ctx, {gain: 2})).
     connect(ctx.destination);
 
   baseOsc.start();
@@ -202,15 +216,15 @@ async function init(){
     const dest =
       (i === 2 || i === 5) ? bus1 :
       (i === 3 || i === 6) ? bus2 :
-      master;
+      distGain;
     for (let j = 0, f = 22 * scale[i]; j < 7; j++, f *= 2){
       const
         o = new OscillatorNode(ctx, {frequency: 3 * f}),
         g = hpf.
-          connect(new BiquadFilterNode(ctx, {type: "bandpass", Q: 60, frequency: f})).
+          connect(new BiquadFilterNode(ctx, {type: "bandpass", Q: 70, frequency: f})).
           connect(new GainNode(ctx, {gain: 0}));
       o.connect(g.gain);
-      g.connect(new BiquadFilterNode(ctx, {type: "bandpass", Q: 60, frequency: 2 * f})).
+      g.connect(new BiquadFilterNode(ctx, {type: "bandpass", Q: 70, frequency: 2 * f})).
         connect(dest);
       o.start();
     }
@@ -225,13 +239,13 @@ async function init(){
         r = 80 * Math.random() + 2 * planetRadius,
         a = r * Math.cos(t),
         b = r * Math.sin(t);
-      s.xc.gain.linearRampToValueAtTime(a, ctx.currentTime + 0.005);
-      s.xs.gain.linearRampToValueAtTime(-b, ctx.currentTime + 0.005);
-      s.yc.gain.linearRampToValueAtTime(b, ctx.currentTime + 0.005);
-      s.ys.gain.linearRampToValueAtTime(a, ctx.currentTime + 0.005);
+      s.xc.gain.linearRampToValueAtTime(a, ctx.currentTime + dt);
+      s.xs.gain.linearRampToValueAtTime(-b, ctx.currentTime + dt);
+      s.yc.gain.linearRampToValueAtTime(b, ctx.currentTime + dt);
+      s.ys.gain.linearRampToValueAtTime(a, ctx.currentTime + dt);
       s.cos.frequency.value = s.sin.frequency.value = 2 / r / Math.sqrt(r);
     });
-    requestId = window.requestAnimationFrame(revolve);
+    requestId = window.requestAnimationFrame(draw);
   });
 
   function spacePoint(x, y){
@@ -255,11 +269,11 @@ async function init(){
     const
       a = cx * tmp.cos + cy * tmp.sin,
       b = cy * tmp.cos - cx * tmp.sin;
-    tmp.s.product.gain.linearRampToValueAtTime(1 / r, ctx.currentTime + 0.05);
-    tmp.s.xc.gain.linearRampToValueAtTime(a, ctx.currentTime + 0.005);
-    tmp.s.xs.gain.linearRampToValueAtTime(-b, ctx.currentTime + 0.005);
-    tmp.s.yc.gain.linearRampToValueAtTime(b, ctx.currentTime + 0.005);
-    tmp.s.ys.gain.linearRampToValueAtTime(a, ctx.currentTime + 0.005);
+    tmp.s.product.gain.linearRampToValueAtTime(1 / r, ctx.currentTime + dt);
+    tmp.s.xc.gain.linearRampToValueAtTime(a, ctx.currentTime + dt);
+    tmp.s.xs.gain.linearRampToValueAtTime(-b, ctx.currentTime + dt);
+    tmp.s.yc.gain.linearRampToValueAtTime(b, ctx.currentTime + dt);
+    tmp.s.ys.gain.linearRampToValueAtTime(a, ctx.currentTime + dt);
   }
 
   system.forEach(s =>
@@ -298,7 +312,7 @@ async function init(){
       cx = tmp.s.planet.cx.baseVal.value,
       cy = tmp.s.planet.cy.baseVal.value;
     tmp.s.cos.frequency.value = tmp.s.sin.frequency.value = 2 / r / Math.sqrt(r);
-    tmp.s.product.gain.linearRampToValueAtTime(1 / r, ctx.currentTime + 0.005); 
+    tmp.s.product.gain.linearRampToValueAtTime(1 / r, ctx.currentTime + dt); 
     isManual = false;
   });
 }
