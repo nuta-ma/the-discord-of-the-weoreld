@@ -20,6 +20,7 @@ const
     connect(new GainNode(ctx, {gain: 0.08})).
     connect(new WaveShaperNode(ctx, {curve: [...Array(5001)].map((_, i) => 
       2 / (1 + Math.exp(50 - i/50)) - 1)})).
+    connect(new BiquadFilterNode(ctx, {type: "lowpass", frequency: 6000})).
     connect(new GainNode(ctx)),
   cosWave = new PeriodicWave(ctx, {real: [0,1]}),
   buf = new Float32Array(64);
