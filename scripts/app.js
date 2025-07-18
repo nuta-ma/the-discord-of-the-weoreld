@@ -202,8 +202,7 @@ async function init(){
   modulator.
     connect(new GainNode(ctx, {gain: -1})).
     connect(xr).
-    connect(new WaveShaperNode(ctx, {curve: [1,0,1]})).
-    connect(new GainNode(ctx, {gain: -1})).
+    connect(new WaveShaperNode(ctx, {curve: [-1,0,-1]})).
     connect(del).
     connect(fbGain).
     connect(splitter);
