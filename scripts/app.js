@@ -3,6 +3,7 @@
 const
   volumeRange = document.getElementById("volume-range"),
   distGainRange = document.getElementById("dist-gain-range"),
+  fbGainRange = document.getElementById("fb-gain-range"),
   randomizeButton = document.getElementById("randomize-button"),
   svg = document.getElementById("svg"),
   space = document.getElementById("space"),
@@ -15,14 +16,16 @@ const
   playIcon = document.createElementNS(NS, "polygon"),
   pauseIcon = document.createElementNS(NS, "path"),
   ctx = new AudioContext({latencyHint: "playback"}),
-  distGain = new GainNode(ctx),
+  distGain = new GainNode(ctx, {gain: Math.exp(distGainRange.value * 3)}),
   master = distGain.
     connect(new GainNode(ctx, {gain: 0.08})).
     connect(new WaveShaperNode(ctx, {curve: [...Array(5001)].map((_, i) => 
       2 / (1 + Math.exp(50 - i/50)) - 1)})).
     connect(new BiquadFilterNode(ctx, {type: "lowpass", frequency: 6000})).
-    connect(new GainNode(ctx)),
+    connect(new GainNode(ctx, {gain: 100 ** (volumeRange.value - 1)})),
   cosWave = new PeriodicWave(ctx, {real: [0,1]}),
+  baseOscGain = new GainNode(ctx, {gain: 1 - fbGainRange.value}),
+  fbGain = new GainNode(ctx, {gain: fbGainRange.value}),
   buf = new Float32Array(64);
 let
   isInitialized = false,
@@ -137,6 +140,11 @@ distGainRange.addEventListener("input", e =>
   distGain.gain.linearRampToValueAtTime(
     Math.exp(e.target.value * 3), ctx.currentTime + dt));
 
+fbGainRange.addEventListener("input", e => {
+  baseOscGain.gain.linearRampToValueAtTime(1 - e.target.value, ctx.currentTime + dt);
+  fbGain.gain.linearRampToValueAtTime(e.target.value, ctx.currentTime + dt);
+});
+
 async function init(){
   isInitialized = true;
   const
@@ -144,19 +152,20 @@ async function init(){
       connect(new WaveShaperNode(ctx, {curve: [...Array(1001)].
         map((_, i) => 78 * 8 ** (i/1000))})),
     baseOsc = new OscillatorNode(ctx, {frequency: 0}),
-    baseOscGain = baseOsc.connect(new GainNode(ctx, {gain: 0.4})),
     reverb0 = new ConvolverNode(ctx, {buffer: await fetch("audio/ir0.wav").
       then(x => x.arrayBuffer()).
       then(x => ctx.decodeAudioData(x)), disableNormalization: true}), 
     reverb1 = new ConvolverNode(ctx, {buffer: await fetch("audio/ir1.wav").
       then(x => x.arrayBuffer()).
       then(x => ctx.decodeAudioData(x)), disableNormalization: true}), 
-    am = new GainNode(ctx, {gain: 0}),
     modulator = new OscillatorNode(ctx, {frequency: 0}),
     ratio = new GainNode(ctx, {gain: 0}),
     splitter = new ChannelSplitterNode(ctx, {numberOfOutputs: 2}),
     merger = new ChannelMergerNode(ctx, {numberOfInputs: 2}),
     hpf = new BiquadFilterNode(ctx, {type: "highpass", frequency: 10}),
+    xl = new GainNode(ctx, {gain: 0.5}),
+    xr = new GainNode(ctx, {gain: 0.5}),
+    del = new DelayNode(ctx, {delayTime: 0.7}),
     bus1 = new GainNode(ctx, {gain: 0}),
     bus2 = new GainNode(ctx, {gain: 0}),
     scale = [1, 9/8, 6/5, 4/3, 3/2, 8/5, 9/5];
@@ -170,7 +179,8 @@ async function init(){
 
   baseFreq.
     connect(baseOsc.frequency);
-  baseOscGain.
+  baseOsc.
+    connect(baseOscGain).
     connect(reverb0);
   baseOscGain.
     connect(reverb1);
@@ -180,11 +190,22 @@ async function init(){
   splitter.
     connect(reverb1, 0, 0).
     connect(merger, 0, 1).
-    connect(new WaveShaperNode(ctx, {curve: [-1,1,-1]})).
+    connect(new BiquadFilterNode(ctx, {type: "lowpass", frequency: 7000})).
     connect(hpf).
-    connect(am).
-    connect(new DelayNode(ctx, {delayTime: 0.7})).
-    connect(new GainNode(ctx, {gain: 0.6})).
+    connect(xl);
+  hpf.
+    connect(xr);
+  modulator.
+    connect(xl).
+    connect(new WaveShaperNode(ctx, {curve: [1,0,1]})).
+    connect(del);
+  modulator.
+    connect(new GainNode(ctx, {gain: -1})).
+    connect(xr).
+    connect(new WaveShaperNode(ctx, {curve: [1,0,1]})).
+    connect(new GainNode(ctx, {gain: -1})).
+    connect(del).
+    connect(fbGain).
     connect(splitter);
   system[1].product.
     connect(new WaveShaperNode(ctx, {curve: [0, 2]})).
@@ -192,8 +213,6 @@ async function init(){
   baseFreq.
     connect(ratio).
     connect(modulator.frequency);
-  modulator.
-    connect(am.gain);
   squareOf(system[0].product.
     connect(new WaveShaperNode(ctx, {curve: [0, 1]}))).
     connect(bus1.gain);
